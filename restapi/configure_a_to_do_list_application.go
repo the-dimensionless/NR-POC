@@ -41,6 +41,9 @@ var items = make(map[int64]*models.Item)
 var lastID int64
 
 var itemsLock = &sync.Mutex{}
+var AppNR *newrelic.Application
+var err error
+
 
 func newItemID() int64 {
 	return atomic.AddInt64(&lastID, 1)
@@ -170,21 +173,35 @@ func configureTLS(tlsConfig *tls.Config) {
 func configureServer(s *http.Server, scheme, addr string) {
 }
 
+func newRelicMiddleware(handler http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
+            txn := AppNR.StartTransaction(r.URL.String())
+            defer txn.End()
+
+            // req is a *http.Request, this marks the transaction as a web transaction
+            txn.SetWebRequestHTTP(r)
+
+            // writer is a http.ResponseWriter, use the returned writer in place of the original
+            writer := txn.SetWebResponse(w)
+
+            // do some middleware logic here
+            handler.ServeHTTP(writer, r)
+        })
+}
+
 // The middleware configuration is for the handler executors. These do not apply to the swagger.json document.
 // The middleware executes after routing but before authentication, binding and validation.
 func setupMiddlewares(handler http.Handler) http.Handler {
-	return handler
+	return newRelicMiddleware(handler)
 }
 
 // The middleware configuration happens before anything, this middleware also applies to serving the swagger.json document.
 // So this is a good place to plug in a panic handling middleware, logging and metrics.
 func setupGlobalMiddleware(handler http.Handler) http.Handler {
-	_, h := newrelic.WrapHandleFunc(AppNR, "/", handler.ServeHTTP)
-	return http.HandlerFunc(h)
+	//_, h := newrelic.WrapHandleFunc(AppNR, "/", handler.ServeHTTP)
+	//return http.HandlerFunc(h)
+	return handler
 }
-
-var AppNR *newrelic.Application
-var err error
 
 func init() {
 	fmt.Println("Initializing new relic configs")
